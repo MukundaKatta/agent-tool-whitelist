@@ -1,0 +1,11 @@
+LICENSE
+README.md
+pyproject.toml
+src/agent_tool_whitelist/__init__.py
+src/agent_tool_whitelist/core.py
+src/agent_tool_whitelist/py.typed
+src/agent_tool_whitelist.egg-info/PKG-INFO
+src/agent_tool_whitelist.egg-info/SOURCES.txt
+src/agent_tool_whitelist.egg-info/dependency_links.txt
+src/agent_tool_whitelist.egg-info/top_level.txt
+tests/test_whitelist.py
