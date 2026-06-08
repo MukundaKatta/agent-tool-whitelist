@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, TypeVar
+
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 class ToolNotAllowedError(Exception):
@@ -50,6 +53,9 @@ class ToolWhitelist:
     def __post_init__(self) -> None:
         if not self.allowed:
             raise ToolWhitelistError("allowed list cannot be empty")
+        # Deduplicate while preserving first-seen order so that ``allowed`` and
+        # ``_allowed_set`` never drift out of sync.
+        self.allowed = list(dict.fromkeys(self.allowed))
         self._allowed_set = set(self.allowed)
 
     # ------------------------------------------------------------------
@@ -109,9 +115,14 @@ class ToolWhitelist:
     # ------------------------------------------------------------------
 
     def add(self, name: str) -> None:
-        """Add a tool name to the allowed list."""
-        self.allowed.append(name)
-        self._allowed_set.add(name)
+        """Add a tool name to the allowed list.
+
+        Idempotent: adding a name that is already allowed is a no-op and does
+        not create a duplicate entry in ``allowed``.
+        """
+        if name not in self._allowed_set:
+            self.allowed.append(name)
+            self._allowed_set.add(name)
 
     def remove(self, name: str) -> None:
         """Remove a tool name from the allowed list."""
@@ -153,8 +164,18 @@ def _extract_name(call: dict[str, Any]) -> str:
 # Decorator
 # ---------------------------------------------------------------------------
 
-def tool_guard(whitelist: ToolWhitelist):
+def tool_guard(whitelist: ToolWhitelist) -> Callable[[F], F]:
     """Decorator that checks the tool name before calling the function.
+
+    The wrapped function must take the tool name as its first positional
+    argument. ``whitelist.check`` is invoked before the function body runs, so
+    a blocked tool is rejected before any side effects occur:
+
+    * If the whitelist raises on deny (the default), a blocked tool raises
+      :class:`ToolNotAllowedError` and the wrapped function is never called.
+    * If the whitelist was created with ``raise_on_deny=False``, a blocked tool
+      is recorded in ``denied_names``, the wrapped function is skipped, and the
+      wrapper returns ``None``.
 
     Usage::
 
@@ -162,10 +183,13 @@ def tool_guard(whitelist: ToolWhitelist):
         def run_tool(name: str, args: dict) -> Any:
             ...
     """
-    def decorator(fn):
-        def wrapper(name: str, *args, **kwargs):
-            whitelist.check(name)
+    def decorator(fn: F) -> F:
+        @functools.wraps(fn)
+        def wrapper(name: str, *args: Any, **kwargs: Any) -> Any:
+            if not whitelist.check(name):
+                # Only reached when raise_on_deny=False; the call is blocked,
+                # recorded in denied_names, and the function is not executed.
+                return None
             return fn(name, *args, **kwargs)
-        wrapper.__name__ = fn.__name__
-        return wrapper
+        return wrapper  # type: ignore[return-value]
     return decorator
